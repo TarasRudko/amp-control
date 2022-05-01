@@ -182,34 +182,34 @@ void Crystalfontz128x128_Init(void)
 
 void Crystalfontz128x128_SetDrawFrame(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
-    switch (Lcd_Orientation) {
-        case 0:
-            x0 += 2;
-            y0 += 3;
-            x1 += 2;
-            y1 += 3;
-            break;
-        case 1:
-            x0 += 3;
-            y0 += 2;
-            x1 += 3;
-            y1 += 2;
-            break;
-        case 2:
-            x0 += 2;
-            y0 += 1;
-            x1 += 2;
-            y1 += 1;
-            break;
-        case 3:
-            x0 += 1;
-            y0 += 2;
-            x1 += 1;
-            y1 += 2;
-            break;
-        default:
-            break;
-    }
+//    switch (Lcd_Orientation) {
+//        case 0:
+//            x0 += 2;
+//            y0 += 3;
+//            x1 += 2;
+//            y1 += 3;
+//            break;
+//        case 1:
+//            x0 += 3;
+//            y0 += 2;
+//            x1 += 3;
+//            y1 += 2;
+//            break;
+//        case 2:
+//            x0 += 2;
+//            y0 += 1;
+//            x1 += 2;
+//            y1 += 1;
+//            break;
+//        case 3:
+//            x0 += 1;
+//            y0 += 2;
+//            x1 += 1;
+//            y1 += 2;
+//            break;
+//        default:
+//            break;
+//    }
 
     HAL_LCD_writeCommand(CM_CASET);
     HAL_LCD_writeData((uint8_t)(x0 >> 8));

@@ -48,23 +48,155 @@
 #include "HAL_I2C.h"
 #include "HAL_TMP006.h"
 #include <stdio.h>
-#include <trizub-310x230.h>
+#include <trizub-240x320.h>
 #include "fonts/fontCourier15x24.h"
+#include <ti/devices/msp432p4xx/driverlib/systick.h>
 
 #define DEGREE_CHARACTER 223
+#define DEFAULT_VOLUME 100
 
 /* Graphic library context */
 Graphics_Context g_sContext;
 
 /* Variable for storing temperature value returned from TMP006 */
 float temp;
-uint8_t volume=100;
+uint8_t volume=DEFAULT_VOLUME;
+uint8_t old_volume = DEFAULT_VOLUME;
 
 Graphics_Rectangle rect;
 Graphics_Rectangle rect_yellow, rectFullScreen;
 
+/*
+ * Main function
+ */
+int main(void)
+{
 
-/* GPIO ISR */
+
+    rect.xMax=319;
+    rect.xMin=0;
+    rect.yMax=119;
+    rect.yMin=0;
+    rect_yellow.xMax=319;
+    rect_yellow.xMin=0;
+    rect_yellow.yMax=239;
+    rect_yellow.yMin=120;
+    rectFullScreen.xMax=319;
+    rectFullScreen.xMin=0;
+    rectFullScreen.yMax=239;
+    rectFullScreen.yMin=0;
+
+    /* Halting WDT and disabling master interrupts */
+    MAP_WDT_A_holdTimer();
+    MAP_Interrupt_disableMaster();
+
+    /* Set the core voltage level to VCORE1 */
+    MAP_PCM_setCoreVoltageLevel(PCM_VCORE1);
+
+    /* Set 2 flash wait states for Flash bank 0 and 1*/
+    MAP_FlashCtl_setWaitState(FLASH_BANK0, 2);
+    MAP_FlashCtl_setWaitState(FLASH_BANK1, 2);
+
+    /* Initializes Clock System */
+    MAP_CS_setDCOCenteredFrequency(CS_DCO_FREQUENCY_48);
+
+    MAP_CS_initClockSignal(CS_MCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+    MAP_CS_initClockSignal(CS_HSMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+    MAP_CS_initClockSignal(CS_SMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+    MAP_CS_initClockSignal(CS_ACLK, CS_REFOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+
+
+
+    /* Initializes display */
+    Crystalfontz128x128_Init();
+
+    /* Set default screen orientation */
+    Crystalfontz128x128_SetOrientation(LCD_ORIENTATION_RIGHT);
+
+
+    Graphics_initContext(&g_sContext, &g_sCrystalfontz128x128, &g_sCrystalfontz128x128_funcs);
+
+    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_RED);
+    Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
+//    GrContextFontSet(&g_sContext, &g_sFontFixed6x8);
+    Graphics_clearDisplay(&g_sContext);
+
+    Crystalfontz128x128_DrawBitmap(&g_sCrystalfontz128x128, &rectFullScreen, &image_data_trizub240x320);
+
+
+
+    /* Configuring P1.0 as LED */
+    MAP_GPIO_setAsOutputPin(GPIO_PORT_P1, GPIO_PIN0);
+
+    /* Configuring P4.0 as an input and enabling interrupts */
+    MAP_GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN0);
+    MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN0, GPIO_LOW_TO_HIGH_TRANSITION);
+    MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN0);
+    MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN0);
+
+    MAP_GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN1);
+    MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN1, GPIO_LOW_TO_HIGH_TRANSITION);
+    MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN1);
+    MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN1);
+    MAP_Interrupt_enableInterrupt(INT_PORT4);
+
+    // on 48MGz 1 tick = 0.0208333 us
+    // set period to 0.1s
+    MAP_SysTick_enableModule();
+    SysTick_setPeriod(4800000);
+    MAP_SysTick_enableInterrupt();
+
+    /* Enabling MASTER interrupts */
+    MAP_Interrupt_enableMaster();
+    /* Initializes graphics context */
+
+    __delay_cycles(100000);
+
+    Graphics_setFont(&g_sContext, &g_sFontcourier15x24);
+    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_RED);
+
+    char volume_str[20];
+    sprintf(volume_str, "Volume = ");
+
+    Graphics_drawStringCentered(&g_sContext,
+                                (int8_t *)volume_str,
+                                AUTO_STRING_LENGTH,
+                                120,
+                                30,
+                    OPAQUE_TEXT);
+    sprintf(volume_str, "%5.1f dB",31.5-(0.5*(255-volume)));
+    Graphics_drawStringCentered(&g_sContext,
+                                (int8_t *)volume_str,
+                                45,
+                                220,
+                                30,
+                    OPAQUE_TEXT);
+    while(1)
+    {
+
+    }
+}
+
+/* SysTick ISR */
+void SysTick_Handler(void)
+{
+    MAP_GPIO_toggleOutputOnPin(GPIO_PORT_P1, GPIO_PIN0);
+    if (old_volume != volume) {
+        char volume_str[20];
+
+        sprintf(volume_str, "%5.1f dB",31.5-(0.5*(255-volume)));
+
+        Graphics_drawStringCentered(&g_sContext,
+                                    (int8_t *)volume_str,
+                                    45,
+                                    220,
+                                    30,
+                        OPAQUE_TEXT);
+        old_volume = volume;
+    }
+}
+
+/* GPIO ISR - Encoder */
 void PORT4_IRQHandler(void)
 {
 
@@ -95,122 +227,4 @@ void PORT4_IRQHandler(void)
      encval = 0;
     }
 
-}
-
-/*
- * Main function
- */
-int main(void)
-{
-
-
-    rect.xMax=319;
-    rect.xMin=0;
-    rect.yMax=119;
-    rect.yMin=0;
-    rect_yellow.xMax=319;
-    rect_yellow.xMin=0;
-    rect_yellow.yMax=239;
-    rect_yellow.yMin=120;
-    rectFullScreen.xMax=313;
-    rectFullScreen.xMin=4;
-    rectFullScreen.yMax=234;
-    rectFullScreen.yMin=4;
-
-    /* Halting WDT and disabling master interrupts */
-    MAP_WDT_A_holdTimer();
-    MAP_Interrupt_disableMaster();
-
-    /* Set the core voltage level to VCORE1 */
-    MAP_PCM_setCoreVoltageLevel(PCM_VCORE1);
-
-    /* Set 2 flash wait states for Flash bank 0 and 1*/
-    MAP_FlashCtl_setWaitState(FLASH_BANK0, 2);
-    MAP_FlashCtl_setWaitState(FLASH_BANK1, 2);
-
-    /* Initializes Clock System */
-    MAP_CS_setDCOCenteredFrequency(CS_DCO_FREQUENCY_48);
-
-    MAP_CS_initClockSignal(CS_MCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
-    MAP_CS_initClockSignal(CS_HSMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
-    MAP_CS_initClockSignal(CS_SMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
-    MAP_CS_initClockSignal(CS_ACLK, CS_REFOCLK_SELECT, CS_CLOCK_DIVIDER_1);
-
-    /* Initializes display */
-    Crystalfontz128x128_Init();
-
-    /* Set default screen orientation */
-    Crystalfontz128x128_SetOrientation(LCD_ORIENTATION_RIGHT);
-
-
-    Graphics_initContext(&g_sContext, &g_sCrystalfontz128x128, &g_sCrystalfontz128x128_funcs);
-
-    Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
-
-    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_RED);
-    Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_WHITE);
-    GrContextFontSet(&g_sContext, &g_sFontFixed6x8);
-    Graphics_clearDisplay(&g_sContext);
-    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_CYAN);
-    Graphics_fillRectangle(&g_sContext, &rect);
-    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_YELLOW);
-    Graphics_fillRectangle(&g_sContext, &rect_yellow);
-
-    Crystalfontz128x128_DrawBitmap(&g_sCrystalfontz128x128, &rectFullScreen, &image_data_trizub310x230);
-
-    Graphics_setFont(&g_sContext, &g_sFontcourier15x24);
-    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_RED);
-
-    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_GREEN);
-    Graphics_drawCircle(&g_sContext, 160, 120, 50);
-
-    /* Configuring P4.0 as an input and enabling interrupts */
-    MAP_GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN0);
-    MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN0, GPIO_LOW_TO_HIGH_TRANSITION);
-    MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN0);
-    MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN0);
-
-    MAP_GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN1);
-    MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN1, GPIO_LOW_TO_HIGH_TRANSITION);
-    MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN1);
-    MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN1);
-    MAP_Interrupt_enableInterrupt(INT_PORT4);
-    /* Enabling MASTER interrupts */
-    MAP_Interrupt_enableMaster();
-    /* Initializes graphics context */
-
-    __delay_cycles(100000);
-    uint8_t old_volume = volume;
-    char volume_str[20];
-    sprintf(volume_str, "Volume = ");
-
-    Graphics_drawStringCentered(&g_sContext,
-                                (int8_t *)volume_str,
-                                AUTO_STRING_LENGTH,
-                                120,
-                                30,
-                    OPAQUE_TEXT);
-    sprintf(volume_str, "%5.1f dB",31.5-(0.5*(255-volume)));
-    Graphics_drawStringCentered(&g_sContext,
-                                (int8_t *)volume_str,
-                                45,
-                                220,
-                                30,
-                    OPAQUE_TEXT);
-    while(1)
-    {
-            if (old_volume != volume) {
-                char volume_str[20];
-
-                sprintf(volume_str, "%5.1f dB",31.5-(0.5*(255-volume)));
-
-                Graphics_drawStringCentered(&g_sContext,
-                                            (int8_t *)volume_str,
-                                            45,
-                                            220,
-                                            30,
-                                OPAQUE_TEXT);
-                old_volume = volume;
-            }
-    }
 }
