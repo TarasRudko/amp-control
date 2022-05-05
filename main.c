@@ -45,8 +45,6 @@
 #include <ti/devices/msp432p4xx/driverlib/driverlib.h>
 #include <ti/grlib/grlib.h>
 #include "LcdDriver/HAL_MSP_EXP432P401R_Crystalfontz128x128_ST7735.h"
-#include "HAL_I2C.h"
-#include "HAL_TMP006.h"
 #include <stdio.h>
 #include <trizub-240x320.h>
 #include "fonts/fontCourier15x24.h"
@@ -100,8 +98,8 @@ Graphics_Rectangle rect_yellow, rectFullScreen;
 void DrawSignalLevelInit(void);
 void DrawSignalLevel(void);
 void initADC();
-void initJoyStick();
-void getSampleJoyStick(uint8_t *X, uint8_t *Y);
+void initSoundLevel();
+void getSampleSoundLevel(uint8_t *X, uint8_t *Y);
 
 
 /*
@@ -144,7 +142,7 @@ int main(void)
     MAP_CS_initClockSignal(CS_ACLK, CS_REFOCLK_SELECT, CS_CLOCK_DIVIDER_1);
 
     initADC();
-    initJoyStick();
+    initSoundLevel();
 
     /* Initializes display */
     Crystalfontz128x128_Init();
@@ -238,7 +236,7 @@ void SysTick_Handler(void)
     Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
     Graphics_setFont(&g_sContext, &g_sFontcourier15x24);
 
-    getSampleJoyStick(&level_left, &level_right);
+    getSampleSoundLevel(&level_left, &level_right);
 
     char volume_str[20];
     char input_str[11];
@@ -391,7 +389,7 @@ void initADC() {
     ADC14_enableSampleTimer(ADC_MANUAL_ITERATION);
 }
 
-void initJoyStick() {
+void initSoundLevel() {
 
     // This configures ADC_MEM0 to store the result from
     // input channel A15 (Joystick X), in non-differential input mode
@@ -424,7 +422,7 @@ void initJoyStick() {
                                                GPIO_TERTIARY_MODULE_FUNCTION);
 }
 
-void getSampleJoyStick(uint8_t *X, uint8_t *Y) {
+void getSampleSoundLevel(uint8_t *X, uint8_t *Y) {
     // This starts the conversion process
     // The S/H will be followed by SAR conversion
     ADC14_enableConversion();
@@ -432,7 +430,7 @@ void getSampleJoyStick(uint8_t *X, uint8_t *Y) {
 
     // We wait for the ADC to complete
     while (ADC14_isBusy()) ;
-    uint32_t L, R;
+
     // and we read the output result from buffer ADC_MEM0
     *X = ADC14_getResult(ADC_MEM0)*12/0x4000;
     *Y = ADC14_getResult(ADC_MEM1)*12/0x4000;
