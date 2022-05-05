@@ -52,7 +52,8 @@
 
 
 #define COLOR_DARK_GREY 0x333333
-
+#define INACTIVE_TEXT_COLOR COLOR_DARK_GREY
+#define ACTIVE_TEXT_COLOR GRAPHICS_COLOR_LIME_GREEN
 #define DEGREE_CHARACTER 223
 #define DEFAULT_VOLUME 100
 #define LEVEL_BAR_X0 0
@@ -73,6 +74,9 @@
 #define LEVEL_ELEMENT_SPACE_V 25
 #define LEVEL_TEXT_H_OFFSET 2
 #define LEVEL_TEXT_DB_V_OFFSET 15
+#define INPUTS_TXT_X 5
+#define INPUTS_TXT_Y 5
+#define INPUTS_TXT_Y_OFFSET 25
 
 #define AMP_CTL_delay(x)      __delay_cycles(x * 48)
 
@@ -86,8 +90,8 @@ Graphics_Context g_sContext;
 float temp;
 
 
-uint8_t level_left = LEVEL_MAX;
-uint8_t level_right = 8;
+uint8_t level_left = 0;
+uint8_t level_right = 0;
 bool refresf_volume=true;
 uint8_t volume=DEFAULT_VOLUME;
 bool input_changed=true;
@@ -98,9 +102,13 @@ Graphics_Rectangle rect_yellow, rectFullScreen;
 void DrawSignalLevelInit(void);
 void DrawSignalLevel(void);
 void initADC();
-void initSoundLevel();
+void initSoundLevelADC();
 void getSampleSoundLevel(uint8_t *X, uint8_t *Y);
-
+void portSetup(void);
+void DrawInitialScreen(void);
+void ReDrawScreen(void);
+void InitClock(void);
+void DrawInputSelector();
 
 /*
  * Main function
@@ -126,23 +134,10 @@ int main(void)
     MAP_WDT_A_holdTimer();
     MAP_Interrupt_disableMaster();
 
-    /* Set the core voltage level to VCORE1 */
-    MAP_PCM_setCoreVoltageLevel(PCM_VCORE1);
-
-    /* Set 2 flash wait states for Flash bank 0 and 1*/
-    MAP_FlashCtl_setWaitState(FLASH_BANK0, 2);
-    MAP_FlashCtl_setWaitState(FLASH_BANK1, 2);
-
-    /* Initializes Clock System */
-    MAP_CS_setDCOCenteredFrequency(CS_DCO_FREQUENCY_48);
-
-    MAP_CS_initClockSignal(CS_MCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
-    MAP_CS_initClockSignal(CS_HSMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
-    MAP_CS_initClockSignal(CS_SMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
-    MAP_CS_initClockSignal(CS_ACLK, CS_REFOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+    InitClock();
 
     initADC();
-    initSoundLevel();
+    initSoundLevelADC();
 
     /* Initializes display */
     Crystalfontz128x128_Init();
@@ -153,6 +148,10 @@ int main(void)
 
     Graphics_initContext(&g_sContext, &g_sCrystalfontz128x128, &g_sCrystalfontz128x128_funcs);
 
+    /* Initializes graphics context */
+
+    __delay_cycles(100000);
+
     Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_RED);
     Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
 //    GrContextFontSet(&g_sContext, &g_sFontFixed6x8);
@@ -160,29 +159,9 @@ int main(void)
 
     Crystalfontz128x128_DrawBitmap(&g_sCrystalfontz128x128, &rectFullScreen, &image_data_trizub240x320);
 
+    portSetup();
 
 
-    /* Configuring P1.0 as LED */
-    MAP_GPIO_setAsOutputPin(GPIO_PORT_P1, GPIO_PIN0);
-
-    /* Configuring P4.0 as an input and enabling interrupts */
-    MAP_GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN0);
-    MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN0, GPIO_LOW_TO_HIGH_TRANSITION);
-    MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN0);
-    MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN0);
-
-    MAP_GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN1);
-    MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN1, GPIO_LOW_TO_HIGH_TRANSITION);
-    MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN1);
-    MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN1);
-    MAP_Interrupt_enableInterrupt(INT_PORT4);
-
-    // Encoder switch
-    MAP_GPIO_setAsInputPinWithPullUpResistor(GPIO_PORT_P4, GPIO_PIN2);
-//    MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN2, GPIO_LOW_TO_HIGH_TRANSITION);
-    MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN2);
-    MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN2);
-    MAP_Interrupt_enableInterrupt(INT_PORT4);
 
     // on 48MGz 1 tick = 0.0208333 us
     // set period to 0.1s
@@ -190,35 +169,7 @@ int main(void)
     SysTick_setPeriod(4800000);
     MAP_SysTick_enableInterrupt();
 
-
-
-    /* Initializes graphics context */
-
-    __delay_cycles(100000);
-
-
-    DrawSignalLevelInit();
-    DrawSignalLevel();
-
-    Graphics_setFont(&g_sContext, &g_sFontcourier15x24);
-    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_YELLOW);
-    Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
-    char volume_str[20];
-    sprintf(volume_str, "Volume = ");
-
-    Graphics_drawStringCentered(&g_sContext,
-                                (int8_t *)volume_str,
-                                AUTO_STRING_LENGTH,
-                                120,
-                                30,
-                    OPAQUE_TEXT);
-    sprintf(volume_str, "%5.1f dB",31.5-(0.5*(255-volume)));
-    Graphics_drawStringCentered(&g_sContext,
-                                (int8_t *)volume_str,
-                                45,
-                                220,
-                                30,
-                    OPAQUE_TEXT);
+    DrawInitialScreen();
 
     /* Enabling MASTER interrupts */
     MAP_Interrupt_enableMaster();
@@ -232,45 +183,10 @@ int main(void)
 void SysTick_Handler(void)
 {
     MAP_GPIO_toggleOutputOnPin(GPIO_PORT_P1, GPIO_PIN0);
-    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_YELLOW);
-    Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
-    Graphics_setFont(&g_sContext, &g_sFontcourier15x24);
 
     getSampleSoundLevel(&level_left, &level_right);
 
-    char volume_str[20];
-    char input_str[11];
-    if (refresf_volume) {
-        sprintf(volume_str, "%5.1f dB",31.5-(0.5*(255-volume)));
-        Graphics_drawStringCentered(&g_sContext,
-                                    (int8_t *)volume_str,
-                                    45,
-                                    220,
-                                    30,
-                        OPAQUE_TEXT);
-        refresf_volume = false;
-    }
-    if (input_changed){
-        switch (source_input) {
-            case input_CD:
-                sprintf(input_str, "Input: CD ");
-              break;
-
-            case input_DAC:
-              // statements
-                sprintf(input_str, "Input: DAC");
-              break;
-
-            case input_PC:
-              // statements
-                sprintf(input_str, "Input: PC ");
-              break;
-        }
-        Graphics_drawString(&g_sContext, (int8_t *)input_str, AUTO_STRING_LENGTH, 120, 70, OPAQUE_TEXT);
-        input_changed = false;
-      }
-    DrawSignalLevel();
-
+    ReDrawScreen();
 }
 
 /* GPIO ISR - Encoder */
@@ -389,7 +305,7 @@ void initADC() {
     ADC14_enableSampleTimer(ADC_MANUAL_ITERATION);
 }
 
-void initSoundLevel() {
+void initSoundLevelADC() {
 
     // This configures ADC_MEM0 to store the result from
     // input channel A15 (Joystick X), in non-differential input mode
@@ -434,5 +350,145 @@ void getSampleSoundLevel(uint8_t *X, uint8_t *Y) {
     // and we read the output result from buffer ADC_MEM0
     *X = ADC14_getResult(ADC_MEM0)*12/0x4000;
     *Y = ADC14_getResult(ADC_MEM1)*12/0x4000;
+
+}
+
+void portSetup(void) {
+    /* Configuring P1.0 as LED */
+        MAP_GPIO_setAsOutputPin(GPIO_PORT_P1, GPIO_PIN0);
+
+        /* Configuring P4.0 as an input and enabling interrupts */
+        MAP_GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN0);
+        MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN0, GPIO_LOW_TO_HIGH_TRANSITION);
+        MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN0);
+        MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN0);
+
+        MAP_GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN1);
+        MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN1, GPIO_LOW_TO_HIGH_TRANSITION);
+        MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN1);
+        MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN1);
+        MAP_Interrupt_enableInterrupt(INT_PORT4);
+
+        // Encoder switch
+        MAP_GPIO_setAsInputPinWithPullUpResistor(GPIO_PORT_P4, GPIO_PIN2);
+    //    MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN2, GPIO_LOW_TO_HIGH_TRANSITION);
+        MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN2);
+        MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN2);
+        MAP_Interrupt_enableInterrupt(INT_PORT4);
+}
+
+void DrawInitialScreen(void){
+        DrawSignalLevelInit();
+        DrawSignalLevel();
+        Graphics_setFont(&g_sContext, &g_sFontcourier15x24);
+        Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_YELLOW);
+        Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
+        char volume_str[20];
+        sprintf(volume_str, "Volume = ");
+
+        Graphics_drawStringCentered(&g_sContext,
+                                    (int8_t *)volume_str,
+                                    AUTO_STRING_LENGTH,
+                                    120,
+                                    30,
+                        OPAQUE_TEXT);
+        sprintf(volume_str, "%5.1f dB",31.5-(0.5*(255-volume)));
+        Graphics_drawStringCentered(&g_sContext,
+                                    (int8_t *)volume_str,
+                                    45,
+                                    220,
+                                    30,
+                        OPAQUE_TEXT);
+
+}
+
+void ReDrawScreen(void){
+    Graphics_setForegroundColor(&g_sContext, GRAPHICS_COLOR_YELLOW);
+    Graphics_setBackgroundColor(&g_sContext, GRAPHICS_COLOR_BLACK);
+    Graphics_setFont(&g_sContext, &g_sFontcourier15x24);
+    char volume_str[20];
+    if (refresf_volume) {
+        sprintf(volume_str, "%5.1f dB",31.5-(0.5*(255-volume)));
+        Graphics_drawStringCentered(&g_sContext,
+                                    (int8_t *)volume_str,
+                                    45,
+                                    220,
+                                    30,
+                        OPAQUE_TEXT);
+        refresf_volume = false;
+    }
+    DrawInputSelector();
+    DrawSignalLevel();
+}
+
+void InitClock(void){
+    /* Set the core voltage level to VCORE1 */
+    MAP_PCM_setCoreVoltageLevel(PCM_VCORE1);
+
+    /* Set 2 flash wait states for Flash bank 0 and 1*/
+    MAP_FlashCtl_setWaitState(FLASH_BANK0, 2);
+    MAP_FlashCtl_setWaitState(FLASH_BANK1, 2);
+
+    /* Initializes Clock System */
+    MAP_CS_setDCOCenteredFrequency(CS_DCO_FREQUENCY_48);
+
+    MAP_CS_initClockSignal(CS_MCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+    MAP_CS_initClockSignal(CS_HSMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+    MAP_CS_initClockSignal(CS_SMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+    MAP_CS_initClockSignal(CS_ACLK, CS_REFOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+}
+
+void DrawInputSelector(){
+
+    Graphics_setFont(&g_sContext, &g_sFontCmss22b);
+
+    char input_str[11];
+    uint32_t CD_txt_color, DAC_txt_color, PC_txt_color;
+    CD_txt_color = INACTIVE_TEXT_COLOR;
+    DAC_txt_color = INACTIVE_TEXT_COLOR;
+    PC_txt_color= INACTIVE_TEXT_COLOR;
+    if (input_changed){
+        switch (source_input) {
+            case input_CD:
+                CD_txt_color = ACTIVE_TEXT_COLOR;
+                sprintf(input_str, "Input: CD ");
+              break;
+
+            case input_DAC:
+              // statements
+                sprintf(input_str, "Input: DAC");
+                DAC_txt_color = ACTIVE_TEXT_COLOR;
+              break;
+
+            case input_PC:
+              // statements
+                sprintf(input_str, "Input: PC ");
+                PC_txt_color = ACTIVE_TEXT_COLOR;
+              break;
+        }
+
+        Graphics_setForegroundColor(&g_sContext, CD_txt_color);
+        Graphics_drawString(&g_sContext,
+                            (int8_t *)"CD",
+                            AUTO_STRING_LENGTH,
+                            INPUTS_TXT_X,
+                            INPUTS_TXT_Y,
+                            TRANSPARENT_TEXT);
+        Graphics_setForegroundColor(&g_sContext, DAC_txt_color);
+        Graphics_drawString(&g_sContext,
+                            (int8_t *)"DAC",
+                            AUTO_STRING_LENGTH,
+                            INPUTS_TXT_X,
+                            INPUTS_TXT_Y + INPUTS_TXT_Y_OFFSET,
+                            TRANSPARENT_TEXT);
+        Graphics_setForegroundColor(&g_sContext, PC_txt_color);
+        Graphics_drawString(&g_sContext,
+                            (int8_t *)"PC",
+                            AUTO_STRING_LENGTH,
+                            INPUTS_TXT_X,
+                            INPUTS_TXT_Y + 2*INPUTS_TXT_Y_OFFSET,
+                            TRANSPARENT_TEXT);
+        input_changed = false;
+      }
 
 }
