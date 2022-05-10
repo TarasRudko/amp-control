@@ -49,6 +49,7 @@
 #include <trizub-240x320.h>
 #include "fonts/fontCourier15x24.h"
 #include <ti/devices/msp432p4xx/driverlib/systick.h>
+#include <ti/grlib/button.h>
 
 
 #define COLOR_DARK_GREY 0x333333
@@ -78,6 +79,23 @@
 #define INPUTS_TXT_Y 5
 #define INPUTS_TXT_Y_OFFSET 25
 
+// TIMER, IR RC
+#define STARTBITMIN 250
+#define STARTBITMAX 330
+#define PAUSEBITMIN 130
+#define PAUSEBITMAX 160
+#define BITMIN 10
+#define BITMAX 30
+#define ZEROBITMIN 10
+#define ZEROBITMAX 30
+#define ONEBITMIN 50
+#define ONEBITMAX 60
+#define IRREPEAT 2
+#define IRDONE 1
+#define IRNONE 0
+
+
+
 #define AMP_CTL_delay(x)      __delay_cycles(x * 48)
 
 enum inputs{ input_CD, input_DAC, input_PC };
@@ -94,11 +112,21 @@ uint8_t level_left = 0;
 uint8_t level_right = 0;
 bool refresf_volume=true;
 uint8_t volume=DEFAULT_VOLUME;
+bool OK_button_redraw=true;
 bool input_changed=true;
 enum inputs source_input = input_CD;
 Graphics_Rectangle rect;
 Graphics_Rectangle rect_yellow, rectFullScreen;
+Graphics_Button OK_button;
+char OK_button_text[4];
 
+// RC
+int x=0;
+int IRdatatmp, IRdata;
+int IRready=0;
+int TimeInterval=0;
+uint16_t IRaddress;
+uint8_t IRcommand;
 void DrawSignalLevelInit(void);
 void DrawSignalLevel(void);
 void initADC();
@@ -109,6 +137,18 @@ void DrawInitialScreen(void);
 void ReDrawScreen(void);
 void InitClock(void);
 void DrawInputSelector();
+void setupTimer();
+
+/* Timer_A Capture Mode Configuration Parameter */
+const Timer_A_CaptureModeConfig captureModeConfig =
+{
+        TIMER_A_CAPTURECOMPARE_REGISTER_1,         // CC Register 2
+        TIMER_A_CAPTUREMODE_RISING_AND_FALLING_EDGE,          // Rising Edge
+        TIMER_A_CAPTURE_INPUTSELECT_CCIxB,        // CCIxB Input Select
+        TIMER_A_CAPTURE_SYNCHRONOUS,              // Synchronized Capture
+        TIMER_A_CAPTURECOMPARE_INTERRUPT_ENABLE,  // Enable interrupt
+        TIMER_A_OUTPUTMODE_OUTBITVALUE            // Output bit value
+};
 
 /*
  * Main function
@@ -130,6 +170,22 @@ int main(void)
     rectFullScreen.yMax=239;
     rectFullScreen.yMin=0;
 
+    sprintf(OK_button_text, "OK");
+    OK_button.xMin = 50;
+    OK_button.xMax = 110;
+    OK_button.yMin = 50;
+    OK_button.yMax = 100;
+    OK_button.borderColor = GRAPHICS_COLOR_BLACK;
+    OK_button.borderWidth = 2;
+    OK_button.fillColor = GRAPHICS_COLOR_GRAY;
+    OK_button.font = &g_sFontCmss22b;
+    OK_button.selected = false;
+    OK_button.selectedColor = GRAPHICS_COLOR_BLACK;
+    OK_button.selectedTextColor = GRAPHICS_COLOR_BLUE;
+    OK_button.text = (int8_t *)OK_button_text;
+    OK_button.textColor = GRAPHICS_COLOR_BLACK;
+    OK_button.textXPos = 55;
+    OK_button.textYPos = 55;
     /* Halting WDT and disabling master interrupts */
     MAP_WDT_A_holdTimer();
     MAP_Interrupt_disableMaster();
@@ -138,6 +194,7 @@ int main(void)
 
     initADC();
     initSoundLevelADC();
+
 
     /* Initializes display */
     Crystalfontz128x128_Init();
@@ -160,22 +217,41 @@ int main(void)
     Crystalfontz128x128_DrawBitmap(&g_sCrystalfontz128x128, &rectFullScreen, &image_data_trizub240x320);
 
     portSetup();
-
+    setupTimer();
 
 
     // on 48MGz 1 tick = 0.0208333 us
     // set period to 0.1s
     MAP_SysTick_enableModule();
-    SysTick_setPeriod(4800000);
+    SysTick_setPeriod(48000000);
     MAP_SysTick_enableInterrupt();
 
     DrawInitialScreen();
 
     /* Enabling MASTER interrupts */
     MAP_Interrupt_enableMaster();
+
+    /* Starting the Timer_A0 in continuous mode */
+    MAP_Timer_A_startCounter(TIMER_A0_BASE, TIMER_A_CONTINUOUS_MODE);
+
     while(1)
     {
 
+        if (IRready == IRDONE) {
+            MAP_Interrupt_disableMaster();
+            char command_str[30];
+            sprintf(command_str, "IRCommand: %X", IRcommand);
+            Graphics_setForegroundColor(&g_sContext, ACTIVE_TEXT_COLOR);
+
+            Graphics_drawString(&g_sContext,
+                                        (int8_t *)command_str,
+                                        AUTO_STRING_LENGTH,
+                                        20,
+                                        100,
+                            OPAQUE_TEXT);
+            IRready = IRNONE;
+            MAP_Interrupt_enableMaster();
+        }
     }
 }
 
@@ -199,7 +275,9 @@ void PORT4_IRQHandler(void)
         // Encoder has been pushed
         source_input =(source_input + 1) % 3;
         input_changed = true;
-        AMP_CTL_delay(50);
+        OK_button.selected = true;
+        OK_button_redraw = true;
+        AMP_CTL_delay(5000);
         return;
     }
     // Encoder interrupt routine for both pins. Updates counter
@@ -372,8 +450,14 @@ void portSetup(void) {
         // Encoder switch
         MAP_GPIO_setAsInputPinWithPullUpResistor(GPIO_PORT_P4, GPIO_PIN2);
     //    MAP_GPIO_interruptEdgeSelect(GPIO_PORT_P4, GPIO_PIN2, GPIO_LOW_TO_HIGH_TRANSITION);
+
+        /* Configuring P2.4 as peripheral input for capture IR signal */
+        MAP_GPIO_setAsPeripheralModuleFunctionInputPin(GPIO_PORT_P2, GPIO_PIN4, GPIO_PRIMARY_MODULE_FUNCTION);
+
+
         MAP_GPIO_clearInterruptFlag(GPIO_PORT_P4, GPIO_PIN2);
         MAP_GPIO_enableInterrupt(GPIO_PORT_P4, GPIO_PIN2);
+        MAP_Interrupt_enableInterrupt(INT_TA0_N);
         MAP_Interrupt_enableInterrupt(INT_PORT4);
 }
 
@@ -400,6 +484,7 @@ void DrawInitialScreen(void){
                                     30,
                         OPAQUE_TEXT);
 
+
 }
 
 void ReDrawScreen(void){
@@ -419,6 +504,12 @@ void ReDrawScreen(void){
     }
     DrawInputSelector();
     DrawSignalLevel();
+    if (OK_button_redraw) {
+        Graphics_drawButton( &g_sContext, &OK_button);
+        OK_button_redraw = false;
+        OK_button.selected = false;
+    }
+
 }
 
 void InitClock(void){
@@ -491,4 +582,94 @@ void DrawInputSelector(){
         input_changed = false;
       }
 
+}
+
+void setupTimer(){
+    TA0CCTL1 = CM_3 + CCIS_0 + SCS + CAP + CCIE; // CM_3 - Capture both edges
+    TA0CCR2 = 500;  // Error detection timeout
+    TA0CCTL2 = CM_1 + CCIE;  //CM_1 - Caprute on rising edge, CCIE -capture/compare interrupt enable
+    TA0CTL = TASSEL_1 + MC_2 + TAIE + ID_0; // ACLK = 32768Hz
+}
+
+void TA0_N_IRQHandler(){
+    uint32_t status  = TA0IV;
+    switch (status){
+    case 2: {
+        TimeInterval = TA0CCR1;
+        TA0R = 0;
+        if (x == 0) {
+            x = 1;
+            break;
+        }
+        if ( x == 1 ) {
+            if ((TimeInterval >= STARTBITMIN) && ( TimeInterval <= STARTBITMAX)) {
+                x = 2;
+                break;
+            }
+            else {
+                x = 0;
+                break;
+            }
+        }
+        if (x == 2) {
+            if ((TimeInterval >= PAUSEBITMIN) && ( TimeInterval <= PAUSEBITMAX)) {
+                x = 3;
+                break;
+            }
+            else {
+                x = 0;
+                IRready = IRREPEAT;
+                break;
+            }
+        }
+        if (( x & 0x01 ) == 0x01 ){
+            if ((TimeInterval >= BITMIN) && ( TimeInterval <= BITMAX)) {
+                x++ ;
+            } else { x = 0; break; }
+        }
+        else {
+            if ((TimeInterval >= ZEROBITMIN) && ( TimeInterval <= ZEROBITMAX)) {
+                x++;
+                IRdatatmp = (IRdatatmp <<1 );
+            }
+            else {
+                if ((TimeInterval >= ONEBITMIN) && ( TimeInterval <= ONEBITMAX)) {
+                    x++;
+                    IRdatatmp = (IRdatatmp <<1) + 1;
+                }
+                else { x=0; break; }
+            }
+        }
+        if (x == 68) {
+            x = 0;
+            uint16_t address = (IRdatatmp & 0xFFFF0000)>>16;
+            uint8_t byte1 = (IRdatatmp & 0x0000FF00)>>8;
+            uint8_t byte0 = (IRdatatmp & 0x000000FF);
+            if (!(byte1 & byte0)) {
+                IRdata = ((IRdatatmp & 0xFF000000)>>16) | ((IRdatatmp & 0x0000FF00)>>8);
+                IRaddress = address;
+                IRcommand = byte0;
+                IRready = IRDONE;
+            } else { IRready = IRNONE;}
+
+            __no_operation();
+        }
+        break;
+    }
+    case 4: {
+        __no_operation();
+        TA0R = 0;
+        x = 0;
+        break;
+    }
+
+    case 14: {
+        __no_operation();
+        TA0R = 0;
+        x = 0;
+        break;
+    }
+
+    default: break;
+    }
 }
